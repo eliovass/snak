@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberSerpent: Escape del Laberinto</title>
+    <style>
+        /* Centra el juego en la pantalla */
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #1a1a2e; /* Fondo oscuro ciberpunk */
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #00ffcc; /* Texto cian neon */
+        }
+        /* Contenedor del juego */
+        #gameContainer {
+            background-color: #0f0f1a; /* Fondo oscuro para la cuadrícula */
+            border: 2px solid #ff0080; /* Borde magenta neon */
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(255, 0, 128, 0.5);
+            position: relative;
+        }
+        /* Canvas donde se dibuja el juego */
+        canvas {
+            background-color: transparent;
+        }
+        /* Estilo para la puntuación y nivel */
+        #score, #level {
+            font-size: 24px;
+            margin: 10px;
+            text-shadow: 0 0 10px #00ffcc;
+        }
+        /* Estilo para el mensaje de game over */
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 36px;
+            color: #ff4d4d;
+            text-shadow: 0 0 10px #ff4d4d;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- Contenedor principal -->
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="gameOver">¡Game Over! Presiona R para reiniciar</div>
+    </div>
+    <div id="score">Puntuación: 0</div>
+    <div id="level">Nivel: 1</div>
+
+    <script>
+        // Obtiene el canvas y su contexto
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.getElementById('gameContainer');
+        const scoreDisplay = document.getElementById('score');
+        const levelDisplay = document.getElementById('level');
+        const gameOverDisplay = document.getElementById('gameOver');
+
+        // Variables del juego
+        let gridSize = 20; // Tamaño inicial de la cuadrícula (20x20 celdas)
+        let tileSize = 20; // Tamaño de cada celda en píxeles
+        let snake = [{ x: 10, y: 10 }]; // Posición inicial de la serpiente
+        let direction = { x: 0, y: 0 }; // Dirección inicial (detenida)
+        let dataPacket = { x: 5, y: 5 }; // Posición inicial del paquete de datos
+        let exit = null; // Portal de salida (null hasta que se recolecten 10 paquetes)
+        let firewalls = []; // Lista de obstáculos (firewalls)
+        let powerUps = []; // Lista de power-ups
+        let score = 0; // Puntuación
+        let level = 1; // Nivel inicial
+        let dataPacketsCollected = 0; // Contador de paquetes recolectados
+        let gameSpeed = 100; // Velocidad inicial (ms por frame)
+        let isTurbo = false; // Estado de power-up turbo
+        let hasShield = false; // Estado de power-up escudo
+        let gameLoop; // Bucle del juego
+
+        // Ajusta el tamaño del canvas según el nivel
+        function setCanvasSize() {
+            canvas.width = gridSize * tileSize;
+            canvas.height = gridSize * tileSize;
+            gameContainer.style.width = `${canvas.width}px`;
+        }
+        setCanvasSize();
+
+        // Genera una posición aleatoria en la cuadrícula
+        function randomGridPosition() {
+            return {
+                x: Math.floor(Math.random() * gridSize),
+                y: Math.floor(Math.random() * gridSize)
+            };
+        }
+
+        // Genera un nuevo paquete de datos
+        function generateDataPacket() {
+            dataPacket = randomGridPosition();
+            while (snake.some(segment => segment.x === dataPacket.x && segment.y === dataPacket.y) ||
+                   firewalls.some(f => f.x === dataPacket.x && f.y === dataPacket.y)) {
+                dataPacket = randomGridPosition();
+            }
+        }
+
+        // Genera un power-up aleatoriamente (10% de probabilidad al comer un paquete)
+        function generatePowerUp() {
+            if (Math.random() < 0.1) {
+                let type = Math.random() < 0.5 ? 'turbo' : 'shield';
+                let pos = randomGridPosition();
+                while (snake.some(segment => segment.x === pos.x && segment.y === pos.y) ||
+                       firewalls.some(f => f.x === pos.x && f.y === pos.y) ||
+                       (dataPacket.x === pos.x && dataPacket.y === pos.y)) {
+                    pos = randomGridPosition();
+                }
+                powerUps.push({ x: pos.x, y: pos.y, type });
+            }
+        }
+
+        // Genera o elimina un firewall cada 5 segundos
+        function updateFirewalls() {
+            if (Math.random() < 0.5 && firewalls.length < level + 2) {
+                let pos = randomGridPosition();
+                while (snake.some(segment => segment.x === pos.x && segment.y === pos.y) ||
+                       (dataPacket.x === pos.x && dataPacket.y === pos.y) ||
+                       (exit && exit.x === pos.x && exit.y === pos.y)) {
+                    pos = randomGridPosition();
+                }
+                firewalls.push(pos);
+            } else if (firewalls.length > 0 && Math.random() < 0.3) {
+                firewalls.splice(Math.floor(Math.random() * firewalls.length), 1);
+            }
+        }
+        setInterval(updateFirewalls, 5000);
+
+        // Dibuja el juego
+        function draw() {
+            // Fondo de la cuadrícula
+            ctx.fillStyle = '#0f0f1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Dibuja la rejilla neon
+            ctx.strokeStyle = '#00ffcc';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= gridSize; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * tileSize, 0);
+                ctx.lineTo(i * tileSize, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * tileSize);
+                ctx.lineTo(canvas.width, i * tileSize);
+                ctx.stroke();
+            }
+            // Dibuja la serpiente
+            snake.forEach((segment, index) => {
+                ctx.fillStyle = index === 0 ? '#ff0080' : '#00ffcc'; // Cabeza magenta, cuerpo cian
+                ctx.fillRect(segment.x * tileSize, segment.y * tileSize, tileSize - 2, tileSize - 2);
+            });
+            // Dibuja el paquete de datos
+            ctx.fillStyle = '#ffd700';
+            ctx.fillRect(dataPacket.x * tileSize, dataPacket.y * tileSize, tileSize - 2, tileSize - 2);
+            // Dibuja los firewalls
+            firewalls.forEach(f => {
+                ctx.fillStyle = '#ff4d4d';
+                ctx.fillRect(f.x * tileSize, f.y * tileSize, tileSize - 2, tileSize - 2);
+            });
+            // Dibuja los power-ups
+            powerUps.forEach(p => {
+                ctx.fillStyle = p.type === 'turbo' ? '#ff00ff' : '#00ff00';
+                ctx.fillRect(p.x * tileSize, p.y * tileSize, tileSize - 2, tileSize - 2);
+            });
+            // Dibuja la salida (si existe)
+            if (exit) {
+                ctx.fillStyle = '#00ff00';
+                ctx.globalAlpha = 0.5 + 0.5 * Math.sin(Date.now() / 200); // Efecto parpadeo
+                ctx.fillRect(exit.x * tileSize, exit.y * tileSize, tileSize - 2, tileSize - 2);
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Actualiza el estado del juego
+        function update() {
+            // Mueve la serpiente
+            const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+            // Verifica colisiones con los bordes
+            if (head.x < 0 || head.x >= gridSize || head.y < 0 || head.y >= gridSize) {
+                gameOver();
+                return;
+            }
+            // Verifica colisión con la serpiente misma
+            if (snake.some(segment => segment.x === head.x && segment.y === head.y)) {
+                gameOver();
+                return;
+            }
+            // Verifica colisión con firewalls
+            if (firewalls.some(f => f.x === head.x && f.y === head.y) && !hasShield) {
+                gameOver();
+                return;
+            } else if (firewalls.some(f => f.x === head.x && f.y === head.y)) {
+                hasShield = false; // Usa el escudo
+            }
+            snake.unshift(head); // Añade la nueva cabeza
+            // Verifica si come un paquete de datos
+            if (head.x === dataPacket.x && head.y === dataPacket.y) {
+                score += 10;
+                dataPacketsCollected++;
+                scoreDisplay.textContent = `Puntuación: ${score}`;
+                generateDataPacket();
+                generatePowerUp();
+                if (dataPacketsCollected >= 10 && !exit) {
+                    exit = randomGridPosition();
+                    while (snake.some(s => s.x === exit.x && s.y === exit.y) ||
+                           firewalls.some(f => f.x === exit.x && f.y === exit.y)) {
+                        exit = randomGridPosition();
+                    }
+                }
+            } else {
+                snake.pop(); // Elimina la cola si no come
+            }
+            // Verifica si recoge un power-up
+            powerUps.forEach((p, index) => {
+                if (head.x === p.x && head.y === p.y) {
+                    if (p.type === 'turbo') {
+                        isTurbo = true;
+                        clearInterval(gameLoop);
+                        gameLoop = setInterval(update, gameSpeed / 2);
+                        setTimeout(() => {
+                            isTurbo = false;
+                            clearInterval(gameLoop);
+                            gameLoop = setInterval(update, gameSpeed);
+                        }, 5000);
+                    } else if (p.type === 'shield') {
+                        hasShield = true;
+                    }
+                    powerUps.splice(index, 1);
+                }
+            });
+            // Verifica si alcanza la salida
+            if (exit && head.x === exit.x && head.y === exit.y) {
+                level++;
+                levelDisplay.textContent = `Nivel: ${level}`;
+                gridSize = Math.max(10, gridSize - 2); // Reduce la cuadrícula
+                gameSpeed = Math.max(50, gameSpeed - 10); // Aumenta velocidad
+                setCanvasSize();
+                snake = [{ x: 5, y: 5 }];
+                direction = { x: 0, y: 0 };
+                dataPacketsCollected = 0;
+                exit = null;
+                firewalls = [];
+                powerUps = [];
+                generateDataPacket();
+                clearInterval(gameLoop);
+                gameLoop = setInterval(update, gameSpeed);
+            }
+            draw();
+        }
+
+        // Maneja el fin del juego
+        function gameOver() {
+            clearInterval(gameLoop);
+            gameOverDisplay.style.display = 'block';
+        }
+
+        // Controles del teclado
+        document.addEventListener('keydown', (event) => {
+            switch (event.key) {
+                case 'ArrowUp':
+                    if (direction.y === 0) direction = { x: 0, y: -1 };
+                    break;
+                case 'ArrowDown':
+                    if (direction.y === 0) direction = { x: 0, y: 1 };
+                    break;
+                case 'ArrowLeft':
+                    if (direction.x === 0) direction = { x: -1, y: 0 };
+                    break;
+                case 'ArrowRight':
+                    if (direction.x === 0) direction = { x: 1, y: 0 };
+                    break;
+                case 'r':
+                case 'R':
+                    if (gameOverDisplay.style.display === 'block') {
+                        snake = [{ x: 10, y: 10 }];
+                        direction = { x: 0, y: 0 };
+                        score = 0;
+                        level = 1;
+                        gridSize = 20;
+                        gameSpeed = 100;
+                        dataPacketsCollected = 0;
+                        exit = null;
+                        firewalls = [];
+                        powerUps = [];
+                        scoreDisplay.textContent = `Puntuación: ${score}`;
+                        levelDisplay.textContent = `Nivel: ${level}`;
+                        gameOverDisplay.style.display = 'none';
+                        setCanvasSize();
+                        generateDataPacket();
+                        clearInterval(gameLoop);
+                        gameLoop = setInterval(update, gameSpeed);
+                    }
+                    break;
+            }
+        });
+
+        // Inicia el juego
+        generateDataPacket();
+        gameLoop = setInterval(update, gameSpeed);
+    </script>
+</body>
+</html>
